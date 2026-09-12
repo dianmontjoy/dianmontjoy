@@ -1,0 +1,48 @@
+name: CI Pipeline
+on: [push, pull_request]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      - name: Install dependencies
+        if: hashFiles('requirements.txt', 'pyproject.toml', 'Pipfile') != ''
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then pip install -e .; fi
+          if [ -f Pipfile ]; then pip install pipenv && pipenv install --dev; fi
+        shell: bash
+      - name: Lint
+        if: hashFiles('setup.cfg', 'tox.ini', '.flake8', 'pyproject.toml') != ''
+        run: |
+          if [ -f pyproject.toml ] && grep -q '\[tool.ruff\]' pyproject.toml; then ruff check .; elif [ -f setup.cfg ] || [ -f tox.ini ] || [ -f .flake8 ]; then flake8 .; else echo 'No lint config found, skipping lint.'; fi
+        shell: bash
+      - name: Build/Type-check
+        if: hashFiles('pyproject.toml', 'setup.py', 'setup.cfg') != ''
+        run: |
+          if [ -f pyproject.toml ] && grep -q '\[tool.mypy\]' pyproject.toml; then mypy .; fi
+          python -m build --sdist --wheel
+        shell: bash
+      - name: Test
+        if: hashFiles('pytest.ini', 'pyproject.toml', 'setup.cfg', 'tox.ini') != ''
+        run: |
+          if [ -f pytest.ini ] || grep -q '\[tool.pytest.ini_options\]' pyproject.toml; then pytest --maxfail=1 --disable-warnings -q; else echo 'No pytest config found, skipping tests.'; fi
+        shell: bash
+      - name: Summary
+        if: always()
+        run: echo "CI pipeline completed for Python ${{ matrix.python-version }}." >> $GITHUB_STEP_SUMMARY
